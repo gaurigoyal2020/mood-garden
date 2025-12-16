@@ -1,6 +1,21 @@
 import React, { useState, useEffect } from 'react';
 import { Calendar } from 'lucide-react';
 
+// API Configuration
+const API_BASE_URL = 'http://localhost:5000/api';
+
+// Generate or retrieve persistent user ID
+const getUserId = () => {
+  let userId = localStorage.getItem('moodGardenUserId');
+  if (!userId) {
+    userId = 'user_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('moodGardenUserId', userId);
+  }
+  return userId;
+};
+
+const USER_ID = getUserId();
+
 const MoodGarden = () => {
   const [selectedMood, setSelectedMood] = useState(null);
   const [journalEntry, setJournalEntry] = useState('');
@@ -8,6 +23,8 @@ const MoodGarden = () => {
   const [showCalendar, setShowCalendar] = useState(false);
   const [history, setHistory] = useState([]);
   const [streak, setStreak] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const moods = [
     { id: 'amazing', emoji: '✨', label: 'Amazing', color: '#ffd4e5', plant: '🌸' },
@@ -17,39 +34,88 @@ const MoodGarden = () => {
     { id: 'anxious', emoji: '😰', label: 'Anxious', color: '#ffd4f0', plant: '🌵' }
   ];
 
+  // Fetch garden data on component mount
   useEffect(() => {
-    // Mock data for demo
-    setGarden([
-      { plant: '🌸', mood: 'amazing', date: new Date() },
-      { plant: '🌻', mood: 'happy', date: new Date() },
-      { plant: '🌿', mood: 'okay', date: new Date() },
-      { plant: '🌸', mood: 'amazing', date: new Date() },
-      { plant: '🍄', mood: 'sad', date: new Date() },
-    ]);
-    setHistory([
-      { plant: '🌸', mood: 'amazing', date: new Date(), journal: 'Had a wonderful day!' },
-      { plant: '🌻', mood: 'happy', date: new Date(Date.now() - 86400000), journal: 'Great weather today' },
-    ]);
-    setStreak(5);
+    fetchGarden();
+    fetchHistory();
+    fetchStreak();
   }, []);
 
-  const handleSubmit = () => {
+  const fetchGarden = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${USER_ID}/garden`);
+      const data = await response.json();
+      setGarden(data.entries || []);
+    } catch (err) {
+      console.error('Error fetching garden:', err);
+      setError('Failed to load garden');
+    }
+  };
+
+  const fetchHistory = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${USER_ID}/history?page=1&limit=20`);
+      const data = await response.json();
+      setHistory(data.entries || []);
+    } catch (err) {
+      console.error('Error fetching history:', err);
+    }
+  };
+
+  const fetchStreak = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${USER_ID}/streak`);
+      const data = await response.json();
+      setStreak(data.streak || 0);
+    } catch (err) {
+      console.error('Error fetching streak:', err);
+    }
+  };
+
+  const handleSubmit = async () => {
     if (!selectedMood) return;
+
+    setLoading(true);
+    setError(null);
 
     const moodData = moods.find(m => m.id === selectedMood);
     
-    const newEntry = {
-      mood: selectedMood,
-      plant: moodData.plant,
-      journal: journalEntry,
-      date: new Date()
-    };
+    try {
+      const response = await fetch(`${API_BASE_URL}/users/${USER_ID}/entries`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          mood: selectedMood,
+          plant: moodData.plant,
+          journal: journalEntry
+        })
+      });
 
-    setGarden([...garden, newEntry]);
-    setHistory([newEntry, ...history]);
-    setSelectedMood(null);
-    setJournalEntry('');
-    setStreak(streak + 1);
+      if (!response.ok) {
+        throw new Error('Failed to create entry');
+      }
+
+      const data = await response.json();
+
+      // Update local state
+      setGarden([data.entry, ...garden]);
+      setHistory([data.entry, ...history]);
+      setStreak(data.streak);
+      
+      // Reset form
+      setSelectedMood(null);
+      setJournalEntry('');
+      
+      // Show success message
+      alert('🌱 Successfully planted in your garden!');
+    } catch (err) {
+      console.error('Error creating entry:', err);
+      setError('Failed to create entry. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const WeatherIcon = () => {
@@ -66,11 +132,11 @@ const MoodGarden = () => {
   };
 
   return (
-    <div className="min-h-screen p-4 sm:p-8" style={{
+    <div className="min-h-screen w-full p-4 sm:p-8" style={{
       background: 'linear-gradient(180deg, #a8d5e2 0%, #f9e4d4 50%, #c8e6c9 100%)',
       imageRendering: 'pixelated'
     }}>
-      <div className="max-w-4xl mx-auto">
+      <div className="max-w-4xl mx-auto w-full">
         {/* Header */}
         <div className="text-center mb-6">
           <div className="flex items-center justify-center gap-3 mb-3 pixel-title">
@@ -93,6 +159,15 @@ const MoodGarden = () => {
           </div>
         </div>
 
+        {/* Error Message */}
+        {error && (
+          <div className="pixel-border pixel-shadow bg-red-100 p-4 mb-6 text-center">
+            <p className="pixel-text text-sm" style={{ color: '#d32f2f' }}>
+              {error}
+            </p>
+          </div>
+        )}
+
         {/* Weather Display */}
         <div className="flex justify-center mb-6">
           <WeatherIcon />
@@ -109,11 +184,12 @@ const MoodGarden = () => {
               <button
                 key={mood.id}
                 onClick={() => setSelectedMood(mood.id)}
+                disabled={loading}
                 className={`p-4 pixel-border transition-all transform hover:scale-105 ${
                   selectedMood === mood.id 
                     ? 'pixel-shadow-selected scale-105' 
                     : 'pixel-shadow-sm'
-                }`}
+                } ${loading ? 'opacity-50 cursor-not-allowed' : ''}`}
                 style={{ backgroundColor: mood.color }}
               >
                 <div className="text-4xl mb-1 pixel-icon">{mood.emoji}</div>
@@ -130,6 +206,7 @@ const MoodGarden = () => {
                 value={journalEntry}
                 onChange={(e) => setJournalEntry(e.target.value)}
                 placeholder="What's on your mind? (optional)"
+                disabled={loading}
                 className="w-full p-4 pixel-border bg-white pixel-text resize-none focus:outline-none"
                 style={{ 
                   color: '#4a3f35',
@@ -140,10 +217,13 @@ const MoodGarden = () => {
               
               <button
                 onClick={handleSubmit}
-                className="w-full pixel-border pixel-shadow bg-[#90c695] hover:bg-[#7ab87f] pixel-text font-bold py-4 transition-all transform hover:scale-102"
+                disabled={loading}
+                className={`w-full pixel-border pixel-shadow bg-[#90c695] hover:bg-[#7ab87f] pixel-text font-bold py-4 transition-all transform hover:scale-102 ${
+                  loading ? 'opacity-50 cursor-not-allowed' : ''
+                }`}
                 style={{ color: '#2d4a2b' }}
               >
-                Plant in Garden 🌱
+                {loading ? 'Planting...' : 'Plant in Garden 🌱'}
               </button>
             </div>
           )}
@@ -207,9 +287,9 @@ const MoodGarden = () => {
                 </div>
               ) : (
                 <div className="flex flex-wrap justify-center gap-3 items-end">
-                  {garden.map((item, idx) => (
+                  {garden.slice(0, 15).map((item, idx) => (
                     <div
-                      key={idx}
+                      key={item._id || idx}
                       className="flex flex-col items-center"
                     >
                       <div
@@ -242,35 +322,43 @@ const MoodGarden = () => {
             <h2 className="pixel-text text-2xl font-bold mb-4" style={{ color: '#4a3f35' }}>
               Mood History
             </h2>
-            <div className="space-y-3 max-h-96 overflow-y-auto">
-              {history.map((entry, idx) => {
-                const moodData = moods.find(m => m.id === entry.mood);
-                return (
-                  <div
-                    key={idx}
-                    className="flex items-center gap-4 p-4 pixel-border pixel-shadow-sm hover:scale-102 transition-transform"
-                    style={{ backgroundColor: moodData?.color || '#fff' }}
-                  >
-                    <div className="text-3xl pixel-icon">{entry.plant}</div>
-                    <div className="flex-1">
-                      <div className="pixel-text font-bold" style={{ color: '#4a3f35' }}>
-                        {new Date(entry.date).toLocaleDateString('en-US', { 
-                          weekday: 'short', 
-                          month: 'short', 
-                          day: 'numeric' 
-                        })}
-                      </div>
-                      {entry.journal && (
-                        <div className="pixel-text text-sm mt-1" style={{ color: '#6b5b4f' }}>
-                          {entry.journal}
+            {history.length === 0 ? (
+              <div className="text-center py-8">
+                <p className="pixel-text text-sm" style={{ color: '#6b5b4f' }}>
+                  No entries yet. Start tracking your moods!
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3 max-h-96 overflow-y-auto">
+                {history.map((entry, idx) => {
+                  const moodData = moods.find(m => m.id === entry.mood);
+                  return (
+                    <div
+                      key={entry._id || idx}
+                      className="flex items-center gap-4 p-4 pixel-border pixel-shadow-sm hover:scale-102 transition-transform"
+                      style={{ backgroundColor: moodData?.color || '#fff' }}
+                    >
+                      <div className="text-3xl pixel-icon">{entry.plant}</div>
+                      <div className="flex-1">
+                        <div className="pixel-text font-bold" style={{ color: '#4a3f35' }}>
+                          {new Date(entry.date).toLocaleDateString('en-US', { 
+                            weekday: 'short', 
+                            month: 'short', 
+                            day: 'numeric' 
+                          })}
                         </div>
-                      )}
+                        {entry.journal && (
+                          <div className="pixel-text text-sm mt-1" style={{ color: '#6b5b4f' }}>
+                            {entry.journal}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-2xl pixel-icon">{moodData?.emoji}</div>
                     </div>
-                    <div className="text-2xl pixel-icon">{moodData?.emoji}</div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
       </div>
